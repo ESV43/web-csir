@@ -20,7 +20,7 @@
 
 var GEMINI_MODEL = 'gemini-3.6-flash';
 var GEMINI_VISION_MODEL = 'gemini-3.6-flash';
-var GEMINI_MAX_TOKENS = 8192;
+var GEMINI_MAX_TOKENS = 58192;
 var PDF_CHUNK_PAGES = 4;          // pages rendered to PNG per Gemini call (controls token budget)
 var INGESTION_BATCH_DELAY_MS = 1500;
 var EXTRACT_IMAGES = true;         // crop embedded figures and attach to questions
@@ -563,7 +563,7 @@ function ingestMy3Files() {
 }
 
 function setMyGeminiKey() {
-  setGeminiKey("your api key here");
+  setGeminiKey("your_api_key_here");
   Logger.log('Gemini API key saved!');
 }
 
