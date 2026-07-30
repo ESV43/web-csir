@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Zap, Info, Check } from 'lucide-react';
-import KaTeXRenderer from './KaTeXRenderer';
+import RichText from './RichText';
 import { VARIABLE_DICTIONARY } from '../data/formulaVault';
 
 export default function FormulaCard({ formula }) {
@@ -8,7 +8,7 @@ export default function FormulaCard({ formula }) {
   const [selectedVar, setSelectedVar] = useState(null);
 
   function renderWithHighlights(latex) {
-    return <KaTeXRenderer math={latex} display className="text-white" />;
+    return <RichText block>{latex}</RichText>;
   }
 
   function extractVariables(latex) {
@@ -73,7 +73,7 @@ export default function FormulaCard({ formula }) {
           {formula.ladderOperators && (
             <div className="text-gray-400">
               <span className="text-violet-300 font-semibold">Ladder Operators:</span>
-              <div className="mt-1"><KaTeXRenderer math={formula.ladderOperators} /></div>
+              <div className="mt-1"><RichText>{formula.ladderOperators}</RichText></div>
             </div>
           )}
           {formula.invariant && (

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { AlertTriangle, RefreshCw, CheckCircle, Clock, Trash2 } from 'lucide-react';
 import { storageService } from '../services/storageService';
 import { CSIR_SUBJECTS } from '../data/csirSyllabus';
-import KaTeXRenderer from '../components/KaTeXRenderer';
+import RichText from '../components/RichText';
 import confetti from 'canvas-confetti';
 
 export default function MistakeVault({ navigate }) {
@@ -99,7 +99,7 @@ export default function MistakeVault({ navigate }) {
                   </div>
                 </div>
 
-                <div className="text-sm text-gray-300 mb-3"><KaTeXRenderer math={m.question} /></div>
+                <div className="text-sm text-gray-300 mb-3"><RichText>{m.question}</RichText></div>
 
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <div className="bg-red-500/5 border border-red-400/15 rounded-lg p-2">

@@ -18,6 +18,8 @@ export const googleSheetsService = {
     if (!url) {
       return {
         pyqs: PYQ_DATABASE,
+        capsules: [],
+        chapters: [],
         mistakes: this.getLocalMistakes(),
         progress: this.getLocalProgress()
       };
@@ -29,6 +31,8 @@ export const googleSheetsService = {
       if (json.status === 'success') {
         return {
           pyqs: json.data.pyqs.length > 0 ? json.data.pyqs : PYQ_DATABASE,
+          capsules: json.data.capsules || [],
+          chapters: json.data.chapters || [],
           mistakes: json.data.mistakeVault || this.getLocalMistakes(),
           progress: this.getLocalProgress()
         };
@@ -39,6 +43,8 @@ export const googleSheetsService = {
 
     return {
       pyqs: PYQ_DATABASE,
+      capsules: [],
+      chapters: [],
       mistakes: this.getLocalMistakes(),
       progress: this.getLocalProgress()
     };

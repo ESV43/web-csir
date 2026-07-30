@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Sigma, Orbit, Zap as ZapIcon, Atom, Flame, Cpu, Sparkles, Grid, Radiation, Lightbulb, AlertTriangle, BookOpen } from 'lucide-react';
+import { ChevronDown, ChevronRight, Sigma, Orbit, Zap as ZapIcon, Atom, Flame, Cpu, Sparkles, Grid, Radiation, Lightbulb, AlertTriangle, BookOpen, ScrollText } from 'lucide-react';
 import { CSIR_SUBJECTS } from '../data/csirSyllabus';
 import { CONCEPT_CAPSULES } from '../data/conceptCapsules';
 import { FORMULA_VAULT } from '../data/formulaVault';
+import { CHAPTERS } from '../data/chapters';
 import { storageService } from '../services/storageService';
 import DerivationStepper from '../components/DerivationStepper';
 import FormulaCard from '../components/FormulaCard';
-import KaTeXRenderer from '../components/KaTeXRenderer';
+import RichText from '../components/RichText';
 
 const ICON_MAP = {
   Sigma, Orbit, Zap: ZapIcon, Atom, Flame, Cpu, Sparkles, Grid, Radiation: Radiation
@@ -18,6 +19,7 @@ export default function KnowledgeVault({ navigate, selectedSubtopic }) {
   const [activeTab, setActiveTab] = useState('capsule');
 
   const capsules = CONCEPT_CAPSULES.filter(c => c.subtopicId === activeSubtopic?.id);
+  const chapters = CHAPTERS.filter(c => c.subtopicId === activeSubtopic?.id);
   const [activeSubjectId, setActiveSubjectId] = useState(null);
   const formulas = FORMULA_VAULT.filter(f => f.subjectId === activeSubjectId);
 
@@ -101,7 +103,8 @@ export default function KnowledgeVault({ navigate, selectedSubtopic }) {
                 <div className="flex gap-2 mt-3">
                   {[
                     { id: 'capsule', label: 'Concept Capsule', icon: Lightbulb },
-                    { id: 'derivation', label: 'Derivation', icon: BookOpen },
+                    { id: 'chapter', label: 'Full Chapter', icon: ScrollText },
+                    { id: 'derivation', label: 'Derivations', icon: BookOpen },
                     { id: 'formula', label: 'Formula Sheet', icon: Grid },
                     { id: 'pitfalls', label: 'Pitfalls', icon: AlertTriangle },
                   ].map(tab => {
@@ -153,7 +156,7 @@ export default function KnowledgeVault({ navigate, selectedSubtopic }) {
                           <div className="space-y-2">
                             {cap.keyTakeaways.map((kt, i) => (
                               <div key={i} className="bg-black/20 rounded-lg px-3 py-2 text-sm text-gray-300">
-                                <KaTeXRenderer math={kt} />
+                                <RichText>{kt}</RichText>
                               </div>
                             ))}
                           </div>
@@ -161,6 +164,54 @@ export default function KnowledgeVault({ navigate, selectedSubtopic }) {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* Full Chapter Tab */}
+              {activeTab === 'chapter' && (
+                <div className="space-y-3">
+                  {chapters.length === 0 ? (
+                    <div className="glass-panel rounded-xl p-8 text-center text-sm text-gray-600">
+                      No full chapter notes available for this subtopic yet. Upload textbook PDFs via the Ingestion engine to auto-generate detailed chapters.
+                    </div>
+                  ) : chapters.map(ch => (
+                    <div key={ch.id} className="glass-panel rounded-2xl overflow-hidden">
+                      {/* Chapter header */}
+                      <div className="bg-gradient-to-r from-cyan-900/20 to-violet-900/20 px-5 py-4 border-b border-white/5">
+                        <div className="flex items-center gap-2 mb-1">
+                          <ScrollText className="w-5 h-5 text-[#00F0FF]" />
+                          <h3 className="text-lg font-bold text-white">{ch.title}</h3>
+                        </div>
+                        <p className="text-xs text-gray-500">{ch.readTime} read · {ch.sections.length} sections</p>
+                      </div>
+
+                      {/* Chapter sections */}
+                      <div className="p-5 space-y-6 max-h-[70vh] overflow-y-auto scrollbar-thin">
+                        {ch.sections.map((sec, i) => (
+                          <div key={i} className="border-l-2 border-cyan-400/20 pl-4">
+                            <h4 className="text-sm font-bold text-[#00F0FF] mb-2">{sec.heading}</h4>
+                            <div className="text-sm text-gray-300 leading-relaxed">
+                              <RichText block>{sec.content}</RichText>
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* Key formulas summary */}
+                        {ch.keyFormulas && ch.keyFormulas.length > 0 && (
+                          <div className="mt-6 pt-4 border-t border-white/10">
+                            <h4 className="text-sm font-bold text-[#00FF88] mb-3">Key Formulas in This Chapter</h4>
+                            <div className="space-y-2">
+                              {ch.keyFormulas.map((f, i) => (
+                                <div key={i} className="bg-black/30 rounded-lg p-3">
+                                  <RichText block>{f}</RichText>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -202,7 +253,7 @@ export default function KnowledgeVault({ navigate, selectedSubtopic }) {
                       <div className="flex items-start gap-2">
                         <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                         <div className="text-sm text-gray-300">
-                          <KaTeXRenderer math={p} />
+                          <RichText>{p}</RichText>
                         </div>
                       </div>
                     </div>

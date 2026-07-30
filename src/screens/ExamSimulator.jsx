@@ -3,7 +3,7 @@ import { FileText, Clock, Calculator, Flag, CheckCircle, XCircle, Play, RotateCc
 import { PYQ_DATABASE } from '../data/pyqDatabase';
 import { CSIR_SUBJECTS } from '../data/csirSyllabus';
 import { storageService } from '../services/storageService';
-import KaTeXRenderer from '../components/KaTeXRenderer';
+import RichText from '../components/RichText';
 import ScientificCalculator from '../components/ScientificCalculator';
 
 const EXAM_CONFIG = {
@@ -208,7 +208,7 @@ export default function ExamSimulator() {
             </div>
 
             <div className="bg-black/20 rounded-lg p-4 mb-4 text-sm text-gray-200">
-              <KaTeXRenderer math={q.question} display />
+              <RichText block>{q.question}</RichText>
             </div>
 
             <div className="space-y-2">
@@ -219,7 +219,7 @@ export default function ExamSimulator() {
                   }`}>
                   <div className="flex items-center gap-2">
                     <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs border border-white/10">{String.fromCharCode(65+i)}</span>
-                    <span className="flex-1"><KaTeXRenderer math={opt} /></span>
+                    <span className="flex-1"><RichText>{opt}</RichText></span>
                     {answers[qKey] === i && <CheckCircle className="w-4 h-4 text-[#00F0FF]" />}
                   </div>
                 </button>

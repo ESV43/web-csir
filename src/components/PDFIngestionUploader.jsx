@@ -4,7 +4,7 @@ import { CSIR_SUBJECTS } from '../data/csirSyllabus';
 import { ingestionService } from '../services/ingestionService';
 import { googleSheetsService } from '../services/googleSheetsService';
 import { aiService } from '../services/aiService';
-import KaTeXRenderer from './KaTeXRenderer';
+import RichText from './RichText';
 
 const SUBJECT_OPTIONS = [
   { id: 'auto', name: 'Auto-Detect Subject', icon: 'Sparkles' },
@@ -246,9 +246,9 @@ export default function PDFIngestionUploader({ onClose }) {
               className="w-full py-3 rounded-xl bg-[#00FF88]/15 text-[#00FF88] font-semibold text-sm hover:bg-[#00FF88]/25 transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {ingesting ? (
-                <><Loader className="w-4 h-4 animate-spin" /> Processing with Gemini AI...</>
+                <><Loader className="w-4 h-4 animate-spin" /> Processing with AI...</>
               ) : (
-                <><Zap className="w-4 h-4" /> Ingest {files.length} PDF{files.length !== 1 ? 's' : ''} with Gemini AI</>
+                <><Zap className="w-4 h-4" /> Ingest {files.length} PDF{files.length !== 1 ? 's' : ''} with AI</>
               )}
             </button>
           </div>
@@ -336,7 +336,7 @@ batchIngestFromDrive(
                 <p className="text-violet-300 font-mono mb-1">// Capsule: LC Circuit Impedance</p>
                 <p className="text-gray-400 mb-2">Series LC circuit impedance formula with complex phasor analysis</p>
                 <div className="bg-black/40 rounded p-2 mb-2">
-                  <KaTeXRenderer math="Z = i\\omega L + \\frac{1}{i\\omega C} = i\\left(\\omega L - \\frac{1}{\\omega C}\\right)" display />
+                  <RichText block>{'Z = i\\omega L + \\frac{1}{i\\omega C} = i\\left(\\omega L - \\frac{1}{\\omega C}\\right)'}</RichText>
                 </div>
                 <p className="text-green-400 font-mono">// Formula: Resonance condition |  Condenser: |  4 pitfalls extracted</p>
               </div>

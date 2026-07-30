@@ -1,42 +1,74 @@
 import { googleSheetsService } from './googleSheetsService';
 
-const INGEST_CHUNK_SIZE = 1 * 1024 * 1024; // 1MB chunks for base64 transport safety
-
 export const ingestionService = {
+  /**
+   * Upload a PDF to Google Drive via the GAS proxy, then trigger ingestion by file ID.
+   * This avoids the GAS ~50MB request body limit.
+   *
+   * Flow:
+   *   1. POST file bytes to GAS `uploadToDrive` endpoint (GAS writes to Drive)
+   *   2. GAS returns the Drive file ID
+   *   3. POST `ingestPDF` with that file ID → GAS reads from Drive, OCRs, sends to Gemini
+   */
   async ingestPDFFile(file, subjectHint = 'auto', onProgress = null) {
     const url = googleSheetsService.getScriptUrl();
     if (!url) {
       throw new Error('Google Apps Script URL not set. Click the Database icon in the navbar to configure it first.');
     }
 
-    if (onProgress) onProgress({ stage: 'reading', message: `Reading ${file.name}...`, percent: 5 });
+    // Step 1: Upload to Drive via GAS
+    if (onProgress) onProgress({ stage: 'uploading', message: `Uploading ${file.name} to Google Drive...`, percent: 15 });
 
-    // Convert file to base64
-    const base64Data = await fileToBase64(file);
+    let fileId = null;
+    try {
+      // Convert to base64 in chunks if needed (FileReader handles this)
+      const base64Data = await fileToBase64(file);
 
-    if (onProgress) onProgress({ stage: 'uploading', message: 'Uploading PDF to Google Apps Script...', percent: 20 });
+      // If file is large (>5MB), send in chunks to GAS
+      if (base64Data.length > 5 * 1024 * 1024) {
+        fileId = await this._chunkedUpload(file, base64Data, onProgress);
+      } else {
+        const uploadRes = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'uploadToDrive',
+            fileName: file.name,
+            mimeType: file.type || 'application/pdf',
+            fileBlob: base64Data
+          })
+        });
+        const uploadJson = await uploadRes.json();
+        if (uploadJson.status !== 'success') throw new Error(uploadJson.message || 'Drive upload failed');
+        fileId = uploadJson.fileId;
+      }
+    } catch (err) {
+      // If the upload fails (file too big or network), fall back to Drive file ID method
+      throw new Error(`Upload failed: ${err.message}. Try uploading the PDF to Google Drive manually and use the Drive ingestion method in the Apps Script editor:\n\n  ingestFromDrive("FILE_ID", "${subjectHint}")`);
+    }
 
-    // POST to GAS
+    if (onProgress) onProgress({ stage: 'processing', message: 'AI is parsing your textbook (OCR + extraction)...', percent: 40 });
+
+    // Step 2: Trigger ingestion by file ID
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         action: 'ingestPDF',
-        fileBlob: base64Data,
+        fileId: fileId,
         fileName: file.name,
-        contentType: file.type || 'application/pdf',
         subjectHint: subjectHint,
         pageStart: 0
       })
     });
 
-    if (onProgress) onProgress({ stage: 'processing', message: 'Gemini AI is parsing your textbook...', percent: 60 });
+    if (onProgress) onProgress({ stage: 'processing', message: 'Gemini AI is extracting content...', percent: 70 });
 
     let result;
     try {
       result = await response.json();
     } catch (e) {
-      throw new Error('Invalid response from server. Make sure the Apps Script is deployed as a Web App.');
+      throw new Error('Invalid response from server. The request may have timed out. For large books, use the Drive method: ingestFromDrive() in Apps Script.');
     }
 
     if (result.status !== 'success') {
@@ -45,7 +77,7 @@ export const ingestionService = {
 
     if (onProgress) onProgress({
       stage: 'complete',
-      message: `Extracted ${result.itemsExtracted} items from ${result.totalPages} pages!`,
+      message: `Extracted ${result.itemsExtracted || 0} items from ${result.totalPages || 0} pages!`,
       percent: 100,
       result
     });
@@ -53,15 +85,75 @@ export const ingestionService = {
     return result;
   },
 
+  /**
+   * For files >5MB: upload in 4MB base64 chunks via multiple requests.
+   */
+  async _chunkedUpload(file, fullBase64, onProgress) {
+    const url = googleSheetsService.getScriptUrl();
+    const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB base64 per request
+    const totalChunks = Math.ceil(fullBase64.length / CHUNK_SIZE);
+    let fileId = null;
+
+    // Init upload
+    const initRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'initChunkedUpload',
+        fileName: file.name,
+        mimeType: file.type || 'application/pdf',
+        totalChunks
+      })
+    });
+    const initData = await initRes.json();
+    if (initData.status !== 'success') throw new Error('Failed to init chunked upload');
+    fileId = initData.fileId;
+
+    // Send chunks
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const chunk = fullBase64.substring(start, start + CHUNK_SIZE);
+
+      if (onProgress) onProgress({
+        stage: 'uploading',
+        message: `Uploading chunk ${i + 1}/${totalChunks}...`,
+        percent: 15 + Math.round((i / totalChunks) * 25)
+      });
+
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'appendChunk',
+          fileId: fileId,
+          chunkIndex: i,
+          fileBlob: chunk
+        })
+      });
+    }
+
+    // Finalize
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'finalizeChunkedUpload',
+        fileId: fileId
+      })
+    });
+
+    return fileId;
+  },
+
   async ingestFromDrive(fileId, fileName, subjectHint = 'auto', onProgress = null) {
     const url = googleSheetsService.getScriptUrl();
     if (!url) throw new Error('Google Apps Script URL not set.');
 
-    if (onProgress) onProgress({ stage: 'uploading', message: `Requesting ingestion of ${fileName}...`, percent: 10 });
+    if (onProgress) onProgress({ stage: 'processing', message: `AI is parsing ${fileName}...`, percent: 20 });
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         action: 'ingestPDF',
         fileId: fileId,
@@ -71,14 +163,14 @@ export const ingestionService = {
       })
     });
 
-    if (onProgress) onProgress({ stage: 'processing', message: 'Gemini AI is parsing...', percent: 50 });
+    if (onProgress) onProgress({ stage: 'processing', message: 'Gemini AI is extracting content...', percent: 50 });
 
     const result = await response.json();
 
     if (onProgress) onProgress({
       stage: result.status === 'success' ? 'complete' : 'error',
       message: result.status === 'success'
-        ? `Extracted ${result.itemsExtracted} items!`
+        ? `Extracted ${result.itemsExtracted || 0} items!`
         : result.message || 'Failed',
       percent: 100,
       result
@@ -97,18 +189,6 @@ export const ingestionService = {
     } catch {
       return [];
     }
-  },
-
-  setGeminiKey(key) {
-    // Store the key script-side by calling the GAS endpoint
-    const url = googleSheetsService.getScriptUrl();
-    if (url) {
-      fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'setGeminiKey', key })
-      }).catch(() => {});
-    }
   }
 };
 
@@ -116,8 +196,7 @@ function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const result = reader.result;
-      const base64 = result.split(',')[1];
+      const base64 = reader.result.split(',')[1];
       resolve(base64);
     };
     reader.onerror = reject;

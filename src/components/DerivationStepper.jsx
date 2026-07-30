@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Info, CheckCircle } from 'lucide-react';
-import KaTeXRenderer from './KaTeXRenderer';
+import RichText from './RichText';
 
 export default function DerivationStepper({ stepperData }) {
   const [currentStep, setCurrentStep] = useState(0);
@@ -34,7 +34,7 @@ export default function DerivationStepper({ stepperData }) {
         </div>
 
         <div className="my-4 py-3 bg-black/30 rounded-xl px-4">
-          <KaTeXRenderer math={steps[currentStep].formula} display className="text-white" />
+          <RichText block>{steps[currentStep].formula}</RichText>
         </div>
 
         <p className="text-sm text-gray-400 leading-relaxed mb-3">{steps[currentStep].explanation}</p>

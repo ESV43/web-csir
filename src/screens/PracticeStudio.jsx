@@ -4,7 +4,7 @@ import { PYQ_DATABASE } from '../data/pyqDatabase';
 import { CSIR_SUBJECTS } from '../data/csirSyllabus';
 import { storageService } from '../services/storageService';
 import { aiService } from '../services/aiService';
-import KaTeXRenderer from '../components/KaTeXRenderer';
+import RichText from '../components/RichText';
 
 export default function PracticeStudio() {
   const [filters, setFilters] = useState({ year: 'all', section: 'all', subjectId: 'all', difficulty: 'all' });
@@ -108,7 +108,7 @@ export default function PracticeStudio() {
                     <span className="text-xs text-gray-600">- {q.difficulty}</span>
                   </div>
                 </div>
-                <div className="text-sm text-gray-300"><KaTeXRenderer math={q.question} /></div>
+                <div className="text-sm text-gray-300"><RichText block>{q.question}</RichText></div>
               </button>
             );
           })}
@@ -127,7 +127,7 @@ export default function PracticeStudio() {
             </div>
 
             <div className="bg-black/20 rounded-lg p-4 mb-4 text-sm text-gray-200">
-              <KaTeXRenderer math={selectedQ.question} display />
+              <RichText block>{selectedQ.question}</RichText>
             </div>
 
             <div className="space-y-2">
@@ -148,7 +148,7 @@ export default function PracticeStudio() {
                     <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs border border-white/10">
                       {String.fromCharCode(65 + i)}
                     </span>
-                    <span className="flex-1"><KaTeXRenderer math={opt} /></span>
+                    <span className="flex-1"><RichText>{opt}</RichText></span>
                     {selectedOption !== null && i === selectedQ.correctOption && <Check className="w-4 h-4 text-green-400" />}
                     {selectedOption === i && i !== selectedQ.correctOption && <X className="w-4 h-4 text-red-400" />}
                   </div>
@@ -174,7 +174,7 @@ export default function PracticeStudio() {
             {showSolution && (
               <div className="mt-4 p-4 bg-black/20 rounded-xl">
                 <p className="text-xs font-semibold text-[#00F0FF] mb-2">Step-by-Step Solution:</p>
-                <pre className="text-sm text-gray-300 whitespace-pre-wrap font-sans"><KaTeXRenderer math={selectedQ.solutionStepByStep} /></pre>
+                <div className="text-sm text-gray-300 whitespace-pre-wrap font-sans"><RichText block>{selectedQ.solutionStepByStep}</RichText></div>
               </div>
             )}
 
@@ -182,7 +182,7 @@ export default function PracticeStudio() {
             {showShortcut && (
               <div className="mt-4 p-4 bg-amber-500/5 border border-amber-400/15 rounded-xl">
                 <p className="text-xs font-semibold text-amber-400 mb-2 flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> Shortcut Solution:</p>
-                <div className="text-sm text-gray-300"><KaTeXRenderer math={selectedQ.shortcutHack} /></div>
+                <div className="text-sm text-gray-300"><RichText block>{selectedQ.shortcutHack}</RichText></div>
               </div>
             )}
 

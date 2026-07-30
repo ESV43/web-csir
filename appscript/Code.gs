@@ -22,6 +22,7 @@ var INGESTION_BATCH_DELAY_MS = 1500; // Delay between API calls to avoid rate li
 var SHEET_SCHEMAS = {
   'PYQs':          ['id', 'year', 'month', 'section', 'subjectId', 'subtopicId', 'topicName', 'question', 'options', 'correctOption', 'solutionStepByStep', 'shortcutHack', 'difficulty', 'tags', 'sourceFile', 'sourcePage'],
   'Capsules':      ['id', 'subjectId', 'subtopicId', 'title', 'readTime', 'summary', 'keyTakeaways', 'derivationSteps', 'commonPitfalls', 'sourceFile', 'sourcePage'],
+  'Chapters':      ['id', 'subjectId', 'subtopicId', 'title', 'readTime', 'sections', 'keyFormulas', 'sourceFile', 'sourcePage'],
   'Formulas':      ['id', 'subjectId', 'subtopicId', 'title', 'latex', 'ladderOperators', 'degeneracy', 'invariant', 'intensity', 'entropy', 'limitingCases', 'dimensionsCheck', 'examTips', 'sourceFile', 'sourcePage'],
   'Pitfalls':      ['id', 'subjectId', 'subtopicId', 'pitfall', 'explanation', 'sourceFile', 'sourcePage'],
   'MistakeVault':  ['questionId', 'subjectId', 'questionText', 'userAnswer', 'correctAnswer', 'timestamp', 'status'],
@@ -47,6 +48,7 @@ function doGet(e) {
         data: {
           pyqs: getSheetData(sheet, 'PYQs'),
           capsules: getSheetData(sheet, 'Capsules'),
+          chapters: getSheetData(sheet, 'Chapters'),
           formulas: getSheetData(sheet, 'Formulas'),
           pitfalls: getSheetData(sheet, 'Pitfalls'),
           mistakeVault: getSheetData(sheet, 'MistakeVault'),
@@ -158,6 +160,41 @@ function doPost(e) {
     if (action === 'ingestPDF') {
       var result = processPDFIngestion(sheet, data);
       return createJsonResponse(result);
+    }
+
+    // ── Drive upload endpoints (for large file handling) ──
+
+    if (action === 'uploadToDrive') {
+      var blob = Utilities.newBlob(Utilities.base64Decode(data.fileBlob), data.mimeType || 'application/pdf', data.fileName);
+      var uploadedFile = DriveApp.createFile(blob);
+      uploadedFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      return createJsonResponse({ status: 'success', fileId: uploadedFile.getId(), fileName: uploadedFile.getName() });
+    }
+
+    if (action === 'initChunkedUpload') {
+      var tempFolder = getOrCreateTempFolder();
+      var newFile = tempFolder.createFile(data.fileName, '', data.mimeType || 'application/pdf');
+      newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      // Store chunk progress in file description
+      newFile.setDescription('chunks:0/' + data.totalChunks);
+      return createJsonResponse({ status: 'success', fileId: newFile.getId() });
+    }
+
+    if (action === 'appendChunk') {
+      var chunkFile = DriveApp.getFileById(data.fileId);
+      var existingBlob = chunkFile.getBlob();
+      var existingBytes = existingBlob.getBytes();
+      var newBytes = Utilities.base64Decode(data.fileBlob);
+      var combined = concatBytes(existingBytes, newBytes);
+      chunkFile.setContent(combined);
+      var desc = chunkFile.getDescription() || '';
+      var newDesc = desc.replace(/chunks:\d+\//, 'chunks:' + (data.chunkIndex + 1) + '/');
+      chunkFile.setDescription(newDesc);
+      return createJsonResponse({ status: 'success', chunkIndex: data.chunkIndex });
+    }
+
+    if (action === 'finalizeChunkedUpload') {
+      return createJsonResponse({ status: 'success', fileId: data.fileId, message: 'Upload finalized' });
     }
 
     return createJsonResponse({ status: 'error', message: 'Invalid action: ' + action });
@@ -409,6 +446,19 @@ function buildIngestionPrompt(text, subjectHint, startPage, chunkIndex, totalChu
     '      "commonPitfalls": ["pitfall with warning", "pitfall with warning"]',
     '    }',
     '  ],',
+    '  "chapters": [',
+    '    {',
+    '      "subjectId": "<ID>",',
+    '      "subtopicId": "<subtopic slug>",',
+    '      "title": "<chapter title>",',
+    '      "readTime": "15 min",',
+    '      "sections": [',
+    '        {"heading": "<section heading>", "content": "<full detailed content with $...$ LaTeX throughout>"},',
+    '        {"heading": "<section heading>", "content": "<full detailed content with $...$ LaTeX throughout>"}',
+    '      ],',
+    '      "keyFormulas": ["$formula1$", "$formula2$"]',
+    '    }',
+    '  ],',
     '  "formulas": [',
     '    {',
     '      "subjectId": "<ID>",',
@@ -432,12 +482,15 @@ function buildIngestionPrompt(text, subjectHint, startPage, chunkIndex, totalChu
     '',
     'CRITICAL RULES:',
     '1. Extract EVERY question, concept, formula, and pitfall from the text. Do NOT skip or summarize away details.',
-    '2. Convert ALL mathematical expressions to proper LaTeX notation (use \\frac, \\int, \\sum, \\nabla, etc.).',
-    '3. For PYQ questions: infer the section (Part A=aptitude, Part B=core physics, Part C=advanced), difficulty, and year from context.',
-    '4. For concept capsules: capture full physics depth including derivations with individual steps.',
-    '5. If a section of text is irrelevant (TOC, acknowledgments, etc.), skip it.',
-    '6. Return ONLY the JSON object, no markdown fences, no commentary.',
-    '7. If nothing extractable is found, return empty arrays.',
+    '2. Convert ALL mathematical expressions to proper LaTeX notation. Wrap ALL inline math in $...$ delimiters and ALL display math in $$...$$ delimiters. EVERY equation, variable, and expression must have delimiters — never leave bare LaTeX without $ delimiters.',
+    '3. PYQ DETECTION: Look for patterns like "Q.1", "Question 1", "1.", "CSIR", "NET", "JRF", "Part A/B/C", year mentions (2011-2025), multiple-choice option markers "(A) (B) (C) (D)" or "1) 2) 3) 4)". If you see a question with 4 options, it is a PYQ — extract it fully with the correct answer index (0-3).',
+    '4. For each PYQ: provide a DETAILED step-by-step solution (not just the answer), plus a shortcutHack field with a fast trick (dimensional analysis, symmetry, limiting case) to solve in under 60 seconds.',
+    '5. For concept capsules: capture full physics depth including derivations with individual steps. Each step needs a formula in LaTeX and an explanation.',
+    '6. For chapters/books: if you see detailed explanation text with derivations, extract it as a capsule with FULL derivationSteps array covering every step of the derivation.',
+    '7. If a section of text is irrelevant (TOC, acknowledgments, preface, index, etc.), skip it.',
+    '8. Return ONLY the JSON object, no markdown fences, no commentary, no backticks.',
+    '9. If nothing extractable is found, return empty arrays.',
+    '10. For subtopicId, use URL-friendly slugs like: perturbation_theory, lagrangian_hamiltonian, maxwell_eq, scattering, bound_states, angular_momentum, etc.',
     '',
     'TEXT TO PROCESS:',
     '---',
@@ -548,7 +601,7 @@ function callGeminiPDFAPI(apiKey, base64PdfData, promptText) {
  * Parse the AI response (handle potential markdown fences, clean up)
  */
 function parseAIResponse(text) {
-  if (!text) return { pyqs: [], capsules: [], formulas: [], pitfalls: [] };
+  if (!text) return { pyqs: [], capsules: [], formulas: [], pitfalls: [], chapters: [] };
 
   // Strip markdown code fences if present
   text = text.trim();
@@ -562,7 +615,8 @@ function parseAIResponse(text) {
       pyqs: parsed.pyqs || [],
       capsules: parsed.capsules || [],
       formulas: parsed.formulas || [],
-      pitfalls: parsed.pitfalls || []
+      pitfalls: parsed.pitfalls || [],
+      chapters: parsed.chapters || []
     };
   } catch (e) {
     // Sometimes Gemini returns JSON with trailing text — try to extract just the JSON object
@@ -574,7 +628,8 @@ function parseAIResponse(text) {
           pyqs: parsed2.pyqs || [],
           capsules: parsed2.capsules || [],
           formulas: parsed2.formulas || [],
-          pitfalls: parsed2.pitfalls || []
+          pitfalls: parsed2.pitfalls || [],
+          chapters: parsed2.chapters || []
         };
       } catch (e2) {
         Logger.log('Failed to parse AI response: ' + e2.toString());
@@ -621,6 +676,22 @@ function insertExtractedContent(sheet, parsed, sourceFile, sourcePage) {
     count++;
   });
 
+  // Insert Chapters (full detailed chapters with multiple sections)
+  var chSheet = getOrCreateSheet(sheet, 'Chapters');
+  if (parsed.chapters) {
+    parsed.chapters.forEach(function(ch) {
+      chSheet.appendRow([
+        'ch-' + Date.now() + '-' + count,
+        ch.subjectId || '', ch.subtopicId || '',
+        ch.title || '', ch.readTime || '15 min',
+        JSON.stringify(ch.sections || []),
+        JSON.stringify(ch.keyFormulas || []),
+        sourceFile, sourcePage
+      ]);
+      count++;
+    });
+  }
+
   // Insert Formulas
   var fSheet = getOrCreateSheet(sheet, 'Formulas');
   parsed.formulas.forEach(function(f) {
@@ -643,6 +714,20 @@ function insertExtractedContent(sheet, parsed, sourceFile, sourcePage) {
       'pit-' + Date.now() + '-' + count,
       p.subjectId || '', p.subtopicId || '',
       p.pitfall || '', p.explanation || '',
+      sourceFile, sourcePage
+    ]);
+    count++;
+  });
+
+  // Insert Chapters
+  var chSheet = getOrCreateSheet(sheet, 'Chapters');
+  parsed.chapters.forEach(function(ch) {
+    chSheet.appendRow([
+      'ch-' + Date.now() + '-' + count,
+      ch.subjectId || '', ch.subtopicId || '',
+      ch.title || '', ch.readTime || '10 min',
+      JSON.stringify(ch.sections || []),
+      JSON.stringify(ch.keyFormulas || []),
       sourceFile, sourcePage
     ]);
     count++;
@@ -802,6 +887,19 @@ function updateLastLogRow(logSheet, rowData) {
   if (lastRow >= 2) {
     logSheet.getRange(lastRow, 1, 1, rowData.length).setValues([rowData]);
   }
+}
+
+function getOrCreateTempFolder() {
+  var folders = DriveApp.getFoldersByName('VibePhysics_Ingestion');
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder('VibePhysics_Ingestion');
+}
+
+function concatBytes(a, b) {
+  var result = new Array(a.length + b.length);
+  for (var i = 0; i < a.length; i++) result[i] = a[i];
+  for (var j = 0; j < b.length; j++) result[a.length + j] = b[j];
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Zap, Check, X, RotateCcw, Trophy } from 'lucide-react';
 import { HACK_DRILLS } from '../data/hackDrillsData';
-import KaTeXRenderer from '../components/KaTeXRenderer';
+import RichText from '../components/RichText';
 import confetti from 'canvas-confetti';
 
 export default function HackDrills() {
@@ -59,7 +59,7 @@ export default function HackDrills() {
         <h3 className="text-sm font-bold text-gray-200 mb-3">{current.title}</h3>
 
         <div className="bg-black/20 rounded-lg p-4 mb-4 text-sm text-gray-200">
-          <KaTeXRenderer math={current.scenario} display />
+          <RichText block>{current.scenario}</RichText>
         </div>
 
         <div className="space-y-2">
@@ -75,7 +75,7 @@ export default function HackDrills() {
               }`}>
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs border border-white/10">{String.fromCharCode(65+i)}</span>
-                <span className="flex-1"><KaTeXRenderer math={opt} /></span>
+                <span className="flex-1"><RichText>{opt}</RichText></span>
                 {showAnswer && i === current.correctOption && <Check className="w-4 h-4 text-green-400" />}
                 {showAnswer && selected === i && i !== current.correctOption && <X className="w-4 h-4 text-red-400" />}
               </div>
@@ -86,7 +86,7 @@ export default function HackDrills() {
         {showAnswer && (
           <div className="mt-4 p-4 bg-[#00FF88]/5 border border-[#00FF88]/15 rounded-xl">
             <p className="text-xs font-semibold text-[#00FF88] mb-2 flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> Hack Explanation:</p>
-            <div className="text-sm text-gray-300"><KaTeXRenderer math={current.hackExplanation} /></div>
+            <div className="text-sm text-gray-300"><RichText>{current.hackExplanation}</RichText></div>
           </div>
         )}
 
