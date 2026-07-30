@@ -1,69 +1,87 @@
 /**
- * QuantumNET AI Service — Powered by NVIDIA NIM API
+ * QuantumNET AI Service — Supports NVIDIA NIM + Google Gemini (auto-fallback)
  *
- * NVIDIA NIM uses an OpenAI-compatible endpoint:
- *   POST https://integrate.api.nvidia.com/v1/chat/completions
- *   Authorization: Bearer nvapi-...
+ * Providers (in priority order):
+ *   1. NVIDIA NIM (nvapi-...) — OpenAI-compatible, free tier, 15+ models
+ *   2. Google Gemini (AIza...) — Generative Language API, free tier
+ *   3. Built-in offline responses — always available
  *
- * Supported models (as of 2025):
- *   - meta/llama-3.1-405b-instruct   (best for physics reasoning)
- *   - meta/llama-3.1-70b-instruct     (fast, high quality)
- *   - nvidia/llama-3.1-nemotron-70b-instruct  (NVIDIA tuned)
- *   - mistralai/mixtral-8x22b-instruct
- *   - google/gemma-2-27b              (fallback)
- *
- * The user provides their own API key (nvapi-...), stored in localStorage.
- * If no key is set, high-quality offline simulated responses are returned
- * so the app remains usable without external dependencies.
+ * The service tries NVIDIA NIM first, then Gemini, then falls back to built-in.
+ * You can configure either or both via the Database icon in the top bar.
  */
 
 const STORAGE_KEY_NIM_KEY = 'vibephysics_nim_key';
 const STORAGE_KEY_NIM_MODEL = 'vibephysics_nim_model';
-const DEFAULT_MODEL = 'z-ai/glm-5.2';
+const STORAGE_KEY_GEMINI_KEY = 'vibephysics_gemini_key';
+const DEFAULT_NIM_MODEL = 'z-ai/glm-5.2';
+const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash';
 const NIM_BASE_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 export const aiService = {
-  getApiKey() {
+  // ── NVIDIA NIM ──
+  getNimKey() {
     return localStorage.getItem(STORAGE_KEY_NIM_KEY) || '';
   },
-
-  setApiKey(key) {
+  setNimKey(key) {
     localStorage.setItem(STORAGE_KEY_NIM_KEY, key.trim());
   },
-
-  getModel() {
-    return localStorage.getItem(STORAGE_KEY_NIM_MODEL) || DEFAULT_MODEL;
+  getNimModel() {
+    return localStorage.getItem(STORAGE_KEY_NIM_MODEL) || DEFAULT_NIM_MODEL;
   },
-
-  setModel(model) {
+  setNimModel(model) {
     localStorage.setItem(STORAGE_KEY_NIM_MODEL, model);
   },
 
-  /**
-   * Core callNIM — sends messages to NVIDIA NIM and returns assistant text.
-   * @param {Array<{role: string, content: string}>} messages
-   * @param {Object} opts — { temperature, maxTokens, topP }
-   * @returns {string} assistant response text
-   */
-  async callNIM(messages, opts = {}) {
-    const apiKey = this.getApiKey();
-    if (!apiKey) {
-      return { ok: false, error: 'NO_KEY', text: '' };
+  // ── Google Gemini ──
+  getGeminiKey() {
+    return localStorage.getItem(STORAGE_KEY_GEMINI_KEY) || '';
+  },
+  setGeminiKey(key) {
+    localStorage.setItem(STORAGE_KEY_GEMINI_KEY, key.trim());
+  },
+  getGeminiModel() {
+    return localStorage.getItem(STORAGE_KEY_GEMINI_MODEL) || DEFAULT_GEMINI_MODEL;
+  },
+  setGeminiModel(model) {
+    localStorage.setItem(STORAGE_KEY_GEMINI_MODEL, model);
+  },
+
+  // ── Core: Try NVIDIA NIM first, then Gemini, then offline ──
+  async callAI(messages, opts = {}) {
+    const { provider = 'auto', temperature = 0.4, maxTokens = 2048, topP = 0.95 } = opts;
+
+    // Try NVIDIA NIM first if key available
+    if (provider !== 'gemini') {
+      const nimKey = this.getNimKey();
+      if (nimKey) {
+        const result = await this._callNIM(messages, { temperature, maxTokens, topP });
+        if (result.ok) return { ok: true, text: result.text, provider: 'nim' };
+        console.warn('NIM failed, trying Gemini:', result.error);
+      }
     }
 
-    const temperature = opts.temperature ?? 0.4;
-    const maxTokens = opts.maxTokens ?? 2048;
-    const topP = opts.topP ?? 0.95;
-    const model = opts.model || this.getModel();
+    // Try Google Gemini if key available
+    if (provider !== 'nim') {
+      const geminiKey = this.getGeminiKey();
+      if (geminiKey) {
+        const result = await this._callGemini(messages, { temperature, maxTokens, topP });
+        if (result.ok) return { ok: true, text: result.text, provider: 'gemini' };
+        console.warn('Gemini failed:', result.error);
+      }
+    }
 
-    const body = {
-      model,
-      messages,
-      temperature,
-      top_p: topP,
-      max_tokens: maxTokens,
-      stream: false
-    };
+    // Both failed or no keys
+    return { ok: false, error: 'NO_KEYS', text: '' };
+  },
+
+  // ── NVIDIA NIM call ──
+  async _callNIM(messages, opts = {}) {
+    const apiKey = this.getNimKey();
+    if (!apiKey) return { ok: false, error: 'NO_NIM_KEY', text: '' };
+
+    const model = opts.model || this.getNimModel();
+    const { temperature = 0.4, maxTokens = 2048, topP = 0.95 } = opts;
 
     try {
       const response = await fetch(NIM_BASE_URL, {
@@ -73,12 +91,19 @@ export const aiService = {
           'Authorization': `Bearer ${apiKey}`,
           'Accept': 'application/json'
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          top_p: topP,
+          max_tokens: maxTokens,
+          stream: false
+        })
       });
 
       if (!response.ok) {
         const errBody = await response.text();
-        let errMsg = `NIM API returned ${response.status}`;
+        let errMsg = `NIM ${response.status}`;
         try {
           const errJson = JSON.parse(errBody);
           if (errJson.error?.message) errMsg = errJson.error.message;
@@ -88,24 +113,74 @@ export const aiService = {
       }
 
       const data = await response.json();
-
-      // OpenAI-compatible response structure
       if (data.choices && data.choices.length > 0) {
         const content = data.choices[0].message?.content;
-        if (content && content.trim()) {
-          return { ok: true, text: content };
-        }
+        if (content && content.trim()) return { ok: true, text: content };
       }
-
-      return { ok: false, error: 'NIM returned an empty response. Try rephrasing your query.', text: '' };
+      return { ok: false, error: 'NIM empty response', text: '' };
     } catch (e) {
-      return { ok: false, error: `Network error: ${e.message}`, text: '' };
+      return { ok: false, error: `NIM network: ${e.message}`, text: '' };
     }
   },
 
-  /**
-   * Explain a specific solution step in plain physics language.
-   */
+  // ── Google Gemini call ──
+  async _callGemini(messages, opts = {}) {
+    const apiKey = this.getGeminiKey();
+    if (!apiKey) return { ok: false, error: 'NO_GEMINI_KEY', text: '' };
+
+    const model = opts.model || this.getGeminiModel() || DEFAULT_GEMINI_MODEL;
+    const { temperature = 0.4, maxTokens = 2048, topP = 0.95 } = opts;
+
+    // Convert OpenAI-style messages to Gemini format
+    const systemInstruction = messages.find(m => m.role === 'system')?.content || '';
+    const userMessages = messages.filter(m => m.role !== 'system');
+
+    const contents = userMessages.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
+
+    try {
+      const response = await fetch(
+        `${GEMINI_BASE_URL}/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents,
+            systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
+            generationConfig: {
+              temperature,
+              topP,
+              maxOutputTokens: maxTokens,
+              responseMimeType: 'text/plain'
+            }
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const errBody = await response.text();
+        let errMsg = `Gemini ${response.status}`;
+        try {
+          const errJson = JSON.parse(errBody);
+          if (errJson.error?.message) errMsg = errJson.error.message;
+        } catch {}
+        return { ok: false, error: errMsg, text: '' };
+      }
+
+      const data = await response.json();
+      if (data.candidates && data.candidates.length > 0) {
+        const content = data.candidates[0].content?.parts?.[0]?.text;
+        if (content && content.trim()) return { ok: true, text: content };
+      }
+      return { ok: false, error: 'Gemini empty response', text: '' };
+    } catch (e) {
+      return { ok: false, error: `Gemini network: ${e.message}`, text: '' };
+    }
+  },
+
+  // ── High-level methods ──
   async explainStep(questionText, fullSolution, stepText) {
     const systemPrompt = `You are QuantumNET AI, an elite CSIR NET Physical Sciences professor. You explain physics steps with absolute clarity, physical intuition, and CSIR-specific tricks. Always use LaTeX for any math (wrap inline math in $...$ and display math in $$...$$). Be concise but thorough.`;
 
@@ -125,31 +200,17 @@ Explain:
 
 Keep it under 200 words. Use $...$ for inline LaTeX.`;
 
-    const messages = [
+    const result = await this.callAI([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
-    ];
-
-    const result = await this.callNIM(messages, { temperature: 0.3, maxTokens: 1024 });
+    ], { temperature: 0.3, maxTokens: 1024 });
 
     if (!result.ok) {
-      if (result.error === 'NO_KEY') {
-        return `**No NVIDIA NIM API key set.** Add your \`nvapi-...\` key via the Database icon in the top bar to enable real AI explanations.\n\nMeanwhile, here's a general breakdown:\n\nThis step applies a core physics identity. The key insight is that the operator acting on the eigenstate can be simplified using orthogonality relations $\\langle \\psi_m | \\psi_n \\rangle = \\delta_{mn}$. Always check whether the state is non-degenerate before applying first-order perturbation theory formulas.`;
-      }
-      return `**NIM API Error:** ${result.error}\n\nPlease verify your NVIDIA NIM API key in settings.`;
+      return this._offlineExplainStep(stepText);
     }
-
     return result.text;
   },
 
-  /**
-   * AI Vibe Tutor Chat — supports multi-turn conversation history.
-   * @param {Array<{role, content}>} chatHistory
-   * @param {string} userMessage
-   * @param {boolean} isSocraticMode
-   * @param {string} imageContext — optional description of uploaded image
-   * @returns {string} assistant reply
-   */
   async askTutor(chatHistory, userMessage, isSocraticMode, imageContext = null) {
     const socraticInstruction = isSocraticMode
       ? `You are in SOCRATIC MODE. Guide the student by asking probing questions about dimensions, symmetry, boundary conditions, conservation laws, or limiting cases. Do NOT give the direct answer immediately. Help them discover it step by step. After 2-3 exchanges of guiding questions, if the student is still struggling, give the full solution.`
@@ -172,16 +233,13 @@ You have deep knowledge of standard textbooks: Griffiths (QM & EMT), Goldstein (
 
 ALWAYS use LaTeX for ALL mathematical expressions:
 - Inline math: $E = mc^2$
-- Display math: $$\\int_{-\\infty}^{\\infty} e^{-x^2} dx = \\sqrt{\\pi}$$
+- Display math: $$\\int_{-\\infty}^{\\infty} e^{-x^2} dx = \\sqrt{\\pi}$
 
 ${socraticInstruction}
 
 Be specific, detailed, and pedagogically excellent. Never give vague hand-wavy answers — every claim must be backed by physics reasoning or a formula.`;
 
-    // Build message array from history
     const messages = [{ role: 'system', content: systemPrompt }];
-
-    // Include prior chat context (last 10 messages max to stay within token limits)
     const recentHistory = chatHistory.slice(-10);
     for (const msg of recentHistory) {
       if (msg.role === 'user') {
@@ -195,39 +253,23 @@ Be specific, detailed, and pedagogically excellent. Never give vague hand-wavy a
       }
     }
 
-    // The current message
     let currentUserContent = userMessage;
     if (imageContext) {
       currentUserContent = `[Image context: ${imageContext}]\n\nStudent: ${userMessage || 'Please identify the concept, convert equations to LaTeX, and solve this step by step.'}`;
     }
     messages.push({ role: 'user', content: currentUserContent });
 
-    const result = await this.callNIM(messages, {
+    const result = await this.callAI(messages, {
       temperature: isSocraticMode ? 0.6 : 0.4,
       maxTokens: 2048
     });
 
     if (!result.ok) {
-      if (result.error === 'NO_KEY') {
-        return `**NVIDIA NIM API key not configured.**
-
-To enable real AI tutoring:
-1. Get a free API key at https://build.nvidia.com
-2. Click the Database icon in the top navigation bar
-3. Paste your \`nvapi-...\` key in the AI Settings section
-4. Save and start chatting
-
-Without a key, I can still guide you with built-in physics knowledge, but I won't be able to give you real-time personalized explanations.`;
-      }
-      return `**NIM API Error:** ${result.error}\n\nPlease verify your NVIDIA NIM API key in settings.`;
+      return this._offlineTutor(isSocraticMode);
     }
-
     return result.text;
   },
 
-  /**
-   * Shortcut & Trick Finder — specialized prompt for dimensional hacks.
-   */
   async findShortcut(problemText) {
     const systemPrompt = `You are QuantumNET Shortcut Finder AI. Given any CSIR NET physics problem, you must provide:
 1. A dimensional analysis approach to eliminate wrong options
@@ -237,21 +279,40 @@ Without a key, I can still guide you with built-in physics knowledge, but I won'
 
 Use LaTeX for all math ($...$ inline, $$...$$ display). Be extremely concise and action-oriented.`;
 
-    const userPrompt = `Find shortcuts and tricks for this CSIR NET problem:\n\n${problemText}`;
-
-    const messages = [
+    const result = await this.callAI([
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ];
-
-    const result = await this.callNIM(messages, { temperature: 0.2, maxTokens: 1024 });
+      { role: 'user', content: `Find shortcuts and tricks for this CSIR NET problem:\n\n${problemText}` }
+    ], { temperature: 0.2, maxTokens: 1024 });
 
     if (!result.ok) {
-      if (result.error === 'NO_KEY') return '⚠️ Set your NVIDIA NIM API key to use the Shortcut Finder.';
-      return `⚠️ NIM API Error: ${result.error}`;
+      return '⚠️ No AI key configured. Add NVIDIA NIM (nvapi-...) or Google Gemini (AIza...) key in settings to use Shortcut Finder.';
     }
-
     return result.text;
+  },
+
+  // ── Offline fallbacks ──
+  _offlineExplainStep(stepText) {
+    return `**No AI key configured.** Add NVIDIA NIM (\`nvapi-...\`) or Google Gemini (\`AIza...\`) key via the Database icon to enable real AI explanations.
+
+**Built-in breakdown for:** ${stepText}
+
+This step applies a core physics identity. The key insight is that the operator acting on the eigenstate can be simplified using orthogonality relations $\\langle \\psi_m | \\psi_n \\rangle = \\delta_{mn}$. Always check whether the state is non-degenerate before applying first-order perturbation theory formulas.`;
+  },
+
+  _offlineTutor(isSocraticMode) {
+    if (isSocraticMode) {
+      return `**No AI key configured.** Add NVIDIA NIM or Gemini key in settings.
+
+**Socratic Nudge (built-in):**
+Before we jump into the integral, let's analyze the physical symmetries!
+1. What happens to the potential $V(x)$ when you swap $x \\to -x$?
+2. Does the boundary condition at $x \\to \\infty$ force the wave function to decay exponentially?
+Try checking if the parity is even or odd first! What do you get?`;
+    }
+    return `**No AI key configured.** Add NVIDIA NIM or Gemini key in settings.
+
+**Direct Breakdown (built-in):**
+For this system, apply the Euler-Lagrange equation with generalized momentum $p = \\frac{\\partial L}{\\partial \\dot{q}}$. Since coordinate $\\phi$ is cyclic, $p_\\phi = m r^2 \\sin^2\\theta \\dot{\\phi}$ is conserved! Use energy conservation $E = T + V_{eff}(r)$ to isolate radial turning points.`;
   }
 };
 
@@ -272,4 +333,17 @@ export const NIM_MODELS = [
   { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', description: 'Advanced LLM for reasoning, math, general knowledge, and function calling', provider: 'nim', free: true },
   { id: 'kimi/kimi-k2.6', name: 'Kimi K2.6', description: '1T multimodal MoE for long-horizon coding, agentic tool use, and image/video understanding', provider: 'nim', free: true },
   { id: 'mistralai/mistral-medium-3.5-128b', name: 'Mistral Medium 3.5 128B', description: 'High performing model for text generation, coding and agentic use cases', provider: 'nim', free: true },
+];
+
+export const GEMINI_MODELS = [
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Latest stable, 1M token context — best balance of speed and capability', provider: 'gemini', free: true },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Most capable stable model, 2M token context — best for complex multi-step derivations', provider: 'gemini', free: true },
+  { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash-8B', description: 'Smaller, faster variant — quick answers for simple questions', provider: 'gemini', free: true },
+  { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash Experimental', description: 'Newest multimodal model with improved reasoning', provider: 'gemini', free: true },
+  { id: 'gemini-2.0-flash-thinking-exp', name: 'Gemini 2.0 Flash Thinking Experimental', description: 'Shows chain-of-thought reasoning — great for step-by-step derivations', provider: 'gemini', free: true },
+];
+
+export const AI_PROVIDERS = [
+  { id: 'nim', name: 'NVIDIA NIM', description: '15+ free models via NVIDIA NIM (nvapi-...)', models: NIM_MODELS },
+  { id: 'gemini', name: 'Google Gemini', description: 'Gemini 1.5 Flash/Pro via Generative Language API (AIza...)', models: GEMINI_MODELS },
 ];
