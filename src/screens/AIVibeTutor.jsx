@@ -14,7 +14,7 @@ export default function AIVibeTutor() {
   const [imageContext, setImageContext] = useState(null);
   const [selectedModel, setSelectedModel] = useState(aiService.getModel());
   const [showModelList, setShowModelList] = useState(false);
-  const [hasKey, setHasKey] = useState(!!aiService.getApiKey());
+  const [hasKey, setHasKey] = useState(aiService.hasKey());
   const chatRef = useRef(null);
 
   useEffect(() => {
@@ -33,6 +33,7 @@ export default function AIVibeTutor() {
     if (!input.trim() && !imagePreview) return;
     const userMsg = { role: 'user', content: input, image: imagePreview };
     const currentInput = input;
+    const currentImage = imagePreview;
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setImagePreview(null);
@@ -42,7 +43,7 @@ export default function AIVibeTutor() {
       messages,
       currentInput,
       socraticMode,
-      imageContext
+      currentImage
     );
     setMessages(prev => [...prev, { role: 'assistant', content: result }]);
     setLoading(false);

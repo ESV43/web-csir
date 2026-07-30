@@ -33,6 +33,25 @@ export const aiService = {
     localStorage.setItem(STORAGE_KEY_NIM_MODEL, model);
   },
 
+  // ── Generic aliases used by UI components (AIVibeTutor / SyncModal / Uploader) ──
+  // These delegate to the NVIDIA NIM slot, which is the primary AI provider for the
+  // chat tutor, step explainer, and shortcut finder.
+  getApiKey() {
+    return this.getNimKey();
+  },
+  setApiKey(key) {
+    if (key) this.setNimKey(key);
+  },
+  getModel() {
+    return this.getNimModel();
+  },
+  setModel(model) {
+    if (model) this.setNimModel(model);
+  },
+  hasKey() {
+    return !!(this.getNimKey() || this.getGeminiKey());
+  },
+
   // ── Google Gemini ──
   getGeminiKey() {
     return localStorage.getItem(STORAGE_KEY_GEMINI_KEY) || '';
@@ -51,8 +70,11 @@ export const aiService = {
   async callAI(messages, opts = {}) {
     const { provider = 'auto', temperature = 0.4, maxTokens = 2048, topP = 0.95 } = opts;
 
+    // If any message contains image data, skip NIM (no vision support) and go to Gemini
+    const hasImages = messages.some(m => m.imageData);
+
     // Try NVIDIA NIM first if key available
-    if (provider !== 'gemini') {
+    if (!hasImages && provider !== 'gemini') {
       const nimKey = this.getNimKey();
       if (nimKey) {
         const result = await this._callNIM(messages, { temperature, maxTokens, topP });
@@ -131,14 +153,25 @@ export const aiService = {
     const model = opts.model || this.getGeminiModel() || DEFAULT_GEMINI_MODEL;
     const { temperature = 0.4, maxTokens = 2048, topP = 0.95 } = opts;
 
-    // Convert OpenAI-style messages to Gemini format
+    // Convert OpenAI-style messages to Gemini format, with optional inline images
     const systemInstruction = messages.find(m => m.role === 'system')?.content || '';
     const userMessages = messages.filter(m => m.role !== 'system');
 
-    const contents = userMessages.map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }]
-    }));
+    const contents = userMessages.map(m => {
+      const parts = [];
+      if (m.imageData) {
+        // m.imageData is a data URL like "data:image/png;base64,iVBOR..."
+        const match = m.imageData.match(/^data:(image\/\w+);base64,(.+)$/);
+        if (match) {
+          parts.push({ inline_data: { mime_type: match[1], data: match[2] } });
+        }
+      }
+      parts.push({ text: m.content || '' });
+      return {
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts
+      };
+    });
 
     try {
       const response = await fetch(
@@ -211,7 +244,7 @@ Keep it under 200 words. Use $...$ for inline LaTeX.`;
     return result.text;
   },
 
-  async askTutor(chatHistory, userMessage, isSocraticMode, imageContext = null) {
+  async askTutor(chatHistory, userMessage, isSocraticMode, imageData = null) {
     const socraticInstruction = isSocraticMode
       ? `You are in SOCRATIC MODE. Guide the student by asking probing questions about dimensions, symmetry, boundary conditions, conservation laws, or limiting cases. Do NOT give the direct answer immediately. Help them discover it step by step. After 2-3 exchanges of guiding questions, if the student is still struggling, give the full solution.`
       : `You are in DIRECT MODE. Provide a clear, detailed, step-by-step answer with full LaTeX derivations, CSIR NET dimensional tricks, and shortcut methods.`;
@@ -243,21 +276,17 @@ Be specific, detailed, and pedagogically excellent. Never give vague hand-wavy a
     const recentHistory = chatHistory.slice(-10);
     for (const msg of recentHistory) {
       if (msg.role === 'user') {
-        let content = msg.content;
-        if (msg.image) {
-          content = `[Student uploaded an image of a physics problem. They say: "${msg.content || 'Please identify the concept and solve this.'}"] Treat this as a real problem image and help accordingly.`;
-        }
-        messages.push({ role: 'user', content });
+        const entry = { role: 'user', content: msg.content || '' };
+        if (msg.image) entry.imageData = msg.image;
+        messages.push(entry);
       } else if (msg.role === 'assistant') {
-        messages.push({ role: 'assistant', content });
+        messages.push({ role: 'assistant', content: msg.content });
       }
     }
 
-    let currentUserContent = userMessage;
-    if (imageContext) {
-      currentUserContent = `[Image context: ${imageContext}]\n\nStudent: ${userMessage || 'Please identify the concept, convert equations to LaTeX, and solve this step by step.'}`;
-    }
-    messages.push({ role: 'user', content: currentUserContent });
+    const userEntry = { role: 'user', content: userMessage || '' };
+    if (imageData) userEntry.imageData = imageData;
+    messages.push(userEntry);
 
     const result = await this.callAI(messages, {
       temperature: isSocraticMode ? 0.6 : 0.4,
@@ -336,11 +365,8 @@ export const NIM_MODELS = [
 ];
 
 export const GEMINI_MODELS = [
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Latest stable, 1M token context — best balance of speed and capability', provider: 'gemini', free: true },
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Most capable stable model, 2M token context — best for complex multi-step derivations', provider: 'gemini', free: true },
-  { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash-8B', description: 'Smaller, faster variant — quick answers for simple questions', provider: 'gemini', free: true },
-  { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash Experimental', description: 'Newest multimodal model with improved reasoning', provider: 'gemini', free: true },
-  { id: 'gemini-2.0-flash-thinking-exp', name: 'Gemini 2.0 Flash Thinking Experimental', description: 'Shows chain-of-thought reasoning — great for step-by-step derivations', provider: 'gemini', free: true },
+  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', description: 'Latest — 1M token context, best speed/quality balance', provider: 'gemini', free: true },
+  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash Lite', description: 'Lightweight — fastest responses, 1M token context', provider: 'gemini', free: true },
 ];
 
 export const AI_PROVIDERS = [

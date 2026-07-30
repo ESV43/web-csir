@@ -109,6 +109,13 @@ export default function PracticeStudio() {
                   </div>
                 </div>
                 <div className="text-sm text-gray-300"><RichText block>{q.question}</RichText></div>
+                {q.images && q.images.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {q.images.map((url, idx) => (
+                      <img key={idx} src={url} alt={`Figure ${idx+1}`} className="max-h-48 rounded-lg border border-white/10" />
+                    ))}
+                  </div>
+                )}
               </button>
             );
           })}
@@ -128,6 +135,13 @@ export default function PracticeStudio() {
 
             <div className="bg-black/20 rounded-lg p-4 mb-4 text-sm text-gray-200">
               <RichText block>{selectedQ.question}</RichText>
+              {selectedQ.images && selectedQ.images.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {selectedQ.images.map((url, idx) => (
+                    <img key={idx} src={url} alt={`Figure ${idx+1}`} className="max-h-64 rounded-lg border border-white/10" />
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
